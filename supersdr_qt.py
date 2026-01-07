@@ -2,7 +2,7 @@
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox, QComboBox
-from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QRectF, QDateTime, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QImage, QFontDatabase, QBrush, QFontMetrics
 
 import numpy as np
@@ -116,15 +116,15 @@ def generate_cutesdr_colormap():
 class SpectrumWidget(QWidget):
     def __init__(self, parent=None, colormap=None, spectrum_height=SPECTRUM_HEIGHT, display_width=DISPLAY_WIDTH):
         super().__init__(parent)
-        self.setMinimumHeight(spectrum_height)
-        self.setMaximumHeight(spectrum_height)
+        self.setMinimumHeight(100)  # Allow resizing
+        # Remove fixed height to allow resizing
+        # self.setMaximumHeight(spectrum_height)
         self.colormap = colormap
         self.spectrum_data = None
         self.wf_auto_scaling = True
         self.wf_min_db = -120
         self.wf_max_db = -60
-        self.display_width = display_width
-        self.spectrum_height = spectrum_height
+        # Don't store fixed dimensions - use dynamic width()/height()
         self.filled = False
         self.col = QYELLOW
         self.D_GREEN = QD_GREEN
@@ -142,30 +142,46 @@ class SpectrumWidget(QWidget):
         if self.spectrum_data is None:
             return
 
+        # Use dynamic dimensions
+        width = self.width()
+        height = self.height()
+        
+        if width <= 0 or height <= 0:
+            return
+
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
         painter.fillRect(self.rect(), QD_GREY)
 
+        data_len = len(self.spectrum_data)
+        if data_len == 0:
+            return
+
         if self.filled:
             path = QPainterPath()
-            if len(self.spectrum_data) > 0:
-                path.moveTo(0, self.spectrum_height)
-                for x, v_scaled in enumerate(self.spectrum_data):
-                    y = self.spectrum_height - 1 - int(v_scaled / 255.0 * self.spectrum_height)
-                    path.lineTo(x, y)
-                path.lineTo(self.display_width, self.spectrum_height)
-                path.closeSubpath()
+            path.moveTo(0, height)
+            for i in range(data_len):
+                # Map data index to screen x coordinate
+                x = int(i * width / data_len)
+                v_scaled = self.spectrum_data[i]
+                y = height - 1 - int(v_scaled / 255.0 * height)
+                path.lineTo(x, y)
+            path.lineTo(width, height)
+            path.closeSubpath()
             
-                painter.fillPath(path, self.col)
+            painter.fillPath(path, self.col)
         else:
             pen = QPen(self.col, 1)
             painter.setPen(pen)
             
-            for x in range(len(self.spectrum_data) - 1):
-                y1 = self.spectrum_height - 1 - int(self.spectrum_data[x] / 255.0 * self.spectrum_height)
-                y2 = self.spectrum_height - 1 - int(self.spectrum_data[x+1] / 255.0 * self.spectrum_height)
-                painter.drawLine(x, y1, x + 1, y2)
+            # Draw line connecting spectrum points
+            for i in range(data_len - 1):
+                x1 = int(i * width / data_len)
+                x2 = int((i + 1) * width / data_len)
+                y1 = height - 1 - int(self.spectrum_data[i] / 255.0 * height)
+                y2 = height - 1 - int(self.spectrum_data[i+1] / 255.0 * height)
+                painter.drawLine(x1, y1, x2, y2)
         
         if not self.wf_auto_scaling:
             wf_dyn_range = self.wf_max_db - self.wf_min_db
@@ -178,35 +194,84 @@ class SpectrumWidget(QWidget):
 
                 for db_val in range(min_wf_10, max_wf_10 + 1, 10):
                     if self.wf_min_db <= db_val <= self.wf_max_db:
-                        y_div = self.spectrum_height - 1 - int((db_val - self.wf_min_db) / wf_dyn_range * self.spectrum_height)
-                        if 0 <= y_div < self.spectrum_height:
-                            painter.drawLine(0, y_div, self.display_width, y_div)
+                        y_div = height - 1 - int((db_val - self.wf_min_db) / wf_dyn_range * height)
+                        if 0 <= y_div < height:
+                            painter.drawLine(0, y_div, width, y_div)
 
 class WaterfallWidget(QWidget):
     def __init__(self, parent=None, colormap=None, wf_height=WF_HEIGHT, display_width=DISPLAY_WIDTH):
         super().__init__(parent)
-        self.setMinimumHeight(wf_height)
-        self.setMaximumHeight(wf_height)
+        self.setMinimumHeight(100)  # Allow resizing
+        # Remove fixed height to allow resizing
+        # self.setMinimumHeight(wf_height)
+        # self.setMaximumHeight(wf_height)
         self.colormap = colormap
-        self.display_width = display_width
-        self.wf_height = wf_height
-
+        
+        # Start with initial dimensions
         self.waterfall_image = QImage(display_width, wf_height, QImage.Format_RGB32)
         self.waterfall_image.fill(QBLACK)
 
+    def resizeEvent(self, event):
+        """Handle widget resize by recreating waterfall image"""
+        super().resizeEvent(event)
+        
+        new_width = self.width()
+        new_height = self.height()
+        
+        if new_width > 0 and new_height > 0:
+            # Create new image with new size
+            new_image = QImage(new_width, new_height, QImage.Format_RGB32)
+            new_image.fill(QBLACK)
+            
+            # Scale and copy old image if it exists
+            if not self.waterfall_image.isNull():
+                painter = QPainter(new_image)
+                # Scale old image to fit new dimensions
+                scaled_old = self.waterfall_image.scaled(new_width, new_height, 
+                                                         Qt.IgnoreAspectRatio, 
+                                                         Qt.FastTransformation)
+                painter.drawImage(0, 0, scaled_old)
+                painter.end()
+            
+            self.waterfall_image = new_image
+
     def update_waterfall_data(self, new_wf_line):
-        if new_wf_line is None or len(new_wf_line) != self.display_width:
+        if new_wf_line is None:
             return
         
-        assert self.colormap is not None, "Colormap is None in WaterfallWidget.update_waterfall_data!"
+        width = self.width()
+        height = self.height()
+        
+        if width <= 0 or height <= 0:
+            return
+        
+        # Ensure image matches current widget size
+        if (self.waterfall_image.isNull() or 
+            self.waterfall_image.width() != width or 
+            self.waterfall_image.height() != height):
+            self.waterfall_image = QImage(width, height, QImage.Format_RGB32)
+            self.waterfall_image.fill(QBLACK)
+            return  # Skip this frame after resize
+        
+        if self.colormap is None:
+            return
 
-        temp_image = QImage(self.display_width, self.wf_height, QImage.Format_RGB32)
+        # Shift image down by 1 pixel
+        temp_image = QImage(width, height, QImage.Format_RGB32)
         painter = QPainter(temp_image)
-        painter.drawImage(0, 1, self.waterfall_image, 0, 0, self.display_width, self.wf_height - 1)
+        # Copy old image shifted down by 1 pixel
+        painter.drawImage(0, 1, self.waterfall_image, 0, 0, width, height - 1)
         painter.end()
         self.waterfall_image = temp_image
 
-        for x, value in enumerate(new_wf_line):
+        # Draw new line at top, scaling it to current width
+        line_len = len(new_wf_line)
+        for x in range(width):
+            # Map screen x coordinate to data index
+            data_idx = int(x * line_len / width) if line_len > 0 else 0
+            data_idx = min(data_idx, line_len - 1)
+            
+            value = new_wf_line[data_idx]
             color_index = int(np.clip(value, 0, 254))
             color = self.colormap[color_index]
             self.waterfall_image.setPixelColor(x, 0, color)
@@ -215,7 +280,8 @@ class WaterfallWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.drawImage(0, 0, self.waterfall_image)
+        if not self.waterfall_image.isNull():
+            painter.drawImage(0, 0, self.waterfall_image)
 
 class TextOverlayWidget(QWidget):
     def __init__(self, parent=None, fonts=None):
@@ -418,24 +484,6 @@ class TuneOverlayWidget(QWidget):
             if rx_freq is not None and start_f_khz is not None and span_khz and wf_bins:
                 rx_bin = (float(rx_freq) - float(start_f_khz)) / (float(span_khz) / float(wf_bins))
                 rx_x = int(rx_bin * bins2pixel_ratio)
-
-                # Draw passband rect in waterfall
-                filter_lc = self.overlay_data.get('filter_lc', 0)
-                filter_hc = self.overlay_data.get('filter_hc', 0)
-                
-                if span_khz > 0:
-                    px_per_hz = (DISPLAY_WIDTH / span_khz) / 1000.0
-                    lc_px = filter_lc * px_per_hz
-                    hc_px = filter_hc * px_per_hz
-                    
-                    x1 = rx_x + lc_px
-                    x2 = rx_x + hc_px
-                    
-                    r_x = min(x1, x2)
-                    r_w = abs(x2 - x1)
-                    
-                    painter.fillRect(QRectF(r_x, float(wf_y), r_w, float(wf_height)), QColor(255, 0, 0, 80))
-
                 if 0 <= rx_x <= DISPLAY_WIDTH:
                     painter.setPen(QPen(QRED, 1))
                     painter.drawLine(rx_x, int(tunebar_y + tunebar_height // 2), rx_x, int(tunebar_y + tunebar_height))
@@ -601,7 +649,7 @@ class ControlDeck(QWidget):
             btn.setCheckable(True)
             if mode == "USB":
                 btn.setChecked(True)
-            if mode == "DIG":
+            if mode in ("NFM", "DIG"):
                 btn.setEnabled(False)
                 btn.setToolTip("Not supported yet")
             mode_layout.addWidget(btn, *pos)
@@ -788,7 +836,7 @@ class SuperSDRMainWindow(QMainWindow):
         super().__init__(None)
         self.setWindowTitle("SuperSDR - Qt Edition (Pure Backend)")
         self.setGeometry(100, 100, DISPLAY_WIDTH, DISPLAY_HEIGHT)
-        self.setFixedSize(DISPLAY_WIDTH, DISPLAY_HEIGHT)
+        self.setMinimumSize(800, 600)  # Enable resizing with minimum size
 
         self.kiwi_host = options['kiwiserver']
         self.kiwi_port = options['kiwiport']
@@ -826,9 +874,9 @@ class SuperSDRMainWindow(QMainWindow):
         main_vbox.setContentsMargins(0, 0, 0, 0)
         main_vbox.setSpacing(0)
 
-        interaction_height = TOPBAR_HEIGHT + SPECTRUM_HEIGHT + TUNEBAR_HEIGHT + WF_HEIGHT
+        # Remove fixed size to allow resizing
         top_interaction_widget = QWidget()
-        top_interaction_widget.setFixedSize(DISPLAY_WIDTH, interaction_height)
+        # top_interaction_widget.setFixedSize(DISPLAY_WIDTH, interaction_height)
         
         self.stacked_layout = QStackedLayout(top_interaction_widget)
         self.stacked_layout.setStackingMode(QStackedLayout.StackAll)
@@ -842,34 +890,38 @@ class SuperSDRMainWindow(QMainWindow):
         self.top_bar.setFixedHeight(TOPBAR_HEIGHT)
         self.top_bar.setStyleSheet("background-color: #333; color: white;")
         self.top_bar.setAlignment(Qt.AlignCenter)
-        base_layout.addWidget(self.top_bar)
+        base_layout.addWidget(self.top_bar, 0)  # stretch = 0
 
         self.shared_colormap = generate_cutesdr_colormap()
 
         self.spectrum_widget = SpectrumWidget(self, colormap=self.shared_colormap)
-        self.spectrum_widget.setFixedHeight(SPECTRUM_HEIGHT)
+        # Remove fixed height to allow resizing
+        # self.spectrum_widget.setFixedHeight(SPECTRUM_HEIGHT)
         self.spectrum_widget.setStyleSheet("background-color: #555;")
-        base_layout.addWidget(self.spectrum_widget)
+        base_layout.addWidget(self.spectrum_widget, 2)  # stretch = 2 for spectrum
 
         self.tune_bar = QLabel("Tune Bar (Placeholder)")
         self.tune_bar.setFixedHeight(TUNEBAR_HEIGHT)
         self.tune_bar.setStyleSheet("background-color: #444; color: white;")
         self.tune_bar.setAlignment(Qt.AlignCenter)
-        base_layout.addWidget(self.tune_bar)
+        base_layout.addWidget(self.tune_bar, 0)  # stretch = 0
 
         self.waterfall_widget = WaterfallWidget(self, colormap=self.shared_colormap)
-        self.waterfall_widget.setFixedHeight(WF_HEIGHT)
+        # Remove fixed height to allow resizing
+        # self.waterfall_widget.setFixedHeight(WF_HEIGHT)
         self.waterfall_widget.setStyleSheet("background-color: #222;")
-        base_layout.addWidget(self.waterfall_widget)
+        base_layout.addWidget(self.waterfall_widget, 3)  # stretch = 3 for waterfall
 
         self.stacked_layout.addWidget(base_layer_widget)
 
         self.text_overlay_widget = TextOverlayWidget(top_interaction_widget, fonts=self.fonts)
-        self.text_overlay_widget.setGeometry(0, 0, DISPLAY_WIDTH, interaction_height)
+        # Remove fixed geometry to allow resizing
+        # self.text_overlay_widget.setGeometry(0, 0, DISPLAY_WIDTH, interaction_height)
         self.stacked_layout.addWidget(self.text_overlay_widget)
 
         self.tune_overlay_widget = TuneOverlayWidget(top_interaction_widget, fonts=self.fonts)
-        self.tune_overlay_widget.setGeometry(0, 0, DISPLAY_WIDTH, interaction_height)
+        # Remove fixed geometry to allow resizing
+        # self.tune_overlay_widget.setGeometry(0, 0, DISPLAY_WIDTH, interaction_height)
         self.stacked_layout.addWidget(self.tune_overlay_widget)
         
         self.tune_overlay_widget.raise_()
@@ -1093,21 +1145,7 @@ class SuperSDRMainWindow(QMainWindow):
         self.current_mode = mode
         if self.kiwi_snd:
             self.kiwi_snd.radio_mode = mode
-            
-            # Set default bandwidths for modes if appropriate
-            if mode == "CW":
-                default_bw = 500
-            elif mode in ["AM", "NFM"]:
-                default_bw = 6000
-            else: # SSB
-                default_bw = 2700
-                
-            self.control_deck.bw_slider.blockSignals(True)
-            self.control_deck.bw_slider.setValue(default_bw)
-            self.control_deck.bw_slider.blockSignals(False)
-            
-            self._apply_bandwidth(default_bw)
-
+            self._apply_bandwidth(self.control_deck.bw_slider.value())
         if self.kiwi_wf:
             self.kiwi_wf.radio_mode = mode
 
@@ -1116,28 +1154,19 @@ class SuperSDRMainWindow(QMainWindow):
             return
 
         width = max(100, int(width))
-        mode = self.kiwi_snd.radio_mode
-
-        if mode == "USB":
-            self.lc = LOW_CUT_SSB
-            self.hc = self.lc + width
-        elif mode == "LSB":
-            self.hc = -LOW_CUT_SSB
-            self.lc = self.hc - width
-        elif mode == "CW":
-            center = CW_PITCH * 1000
-            self.lc = center - width / 2
-            self.hc = center + width / 2
-        elif mode == "AM" or mode == "NFM":
-            self.lc = -width / 2
-            self.hc = width / 2
+        current_lc = getattr(self.kiwi_snd, "lc", LOW_CUT_SSB)
+        current_hc = getattr(self.kiwi_snd, "hc", HIGH_CUT_SSB)
+        if current_lc <= current_hc:
+            target_lc = current_lc
+            target_hc = target_lc + width
         else:
-            # Fallback for DIG or others
-            self.lc = 0
-            self.hc = width
+            target_lc = current_lc
+            target_hc = target_lc - width
 
-        self.kiwi_snd.lc = int(self.lc)
-        self.kiwi_snd.hc = int(self.hc)
+        self.lc = target_lc
+        self.hc = target_hc
+        self.kiwi_snd.lc = self.lc
+        self.kiwi_snd.hc = self.hc
         self.kiwi_snd.set_mode_freq_pb()
 
     def _on_zoom_changed(self, value):
@@ -1337,13 +1366,6 @@ class SuperSDRMainWindow(QMainWindow):
         rx_freq = self.kiwi_snd.freq if self.kiwi_snd else self.current_freq
         radio_mode = self.kiwi_snd.radio_mode if self.kiwi_snd else self.current_mode
 
-        if self.kiwi_snd:
-            filter_lc = self.kiwi_snd.lc
-            filter_hc = self.kiwi_snd.hc
-        else:
-            filter_lc = self.lc if hasattr(self, 'lc') else LOW_CUT_SSB
-            filter_hc = self.hc if hasattr(self, 'hc') else HIGH_CUT_SSB
-
         tune_overlay_data: dict[str, Any] = {
             'center_freq_bin': center_freq_bin,
             'bins2pixel_ratio': bins2pixel_ratio,
@@ -1362,8 +1384,6 @@ class SuperSDRMainWindow(QMainWindow):
             'wf_bins': wf_bins,
             'rx_freq': rx_freq,
             'radio_mode': radio_mode,
-            'filter_lc': filter_lc,
-            'filter_hc': filter_hc,
             'memory_labels': []
         }
 
