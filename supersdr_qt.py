@@ -1778,32 +1778,32 @@ class SuperSDRMainWindow(QMainWindow):
             if key == Qt.Key_Left:
                 fast_tune = mods & Qt.ShiftModifier
                 slow_tune = mods & Qt.ControlModifier
+                new_freq = None
                 if self.kiwi_snd.radio_mode != "CW" and self.kiwi_wf.zoom < 10:
                     if fast_tune:
-                        self.kiwi_snd.freq = self.kiwi_snd.freq //1 - 10
+                        new_freq = self.kiwi_snd.freq //1 - 10
                     elif slow_tune:
-                        self.kiwi_snd.freq = round(self.kiwi_snd.freq - 0.1, 2)
+                        new_freq = round(self.kiwi_snd.freq - 0.1, 2)
                     else:
-                        self.kiwi_snd.freq = self.kiwi_snd.freq //1 if self.kiwi_snd.freq % 1 else self.kiwi_snd.freq //1 - 1
+                        new_freq = self.kiwi_snd.freq //1 if self.kiwi_snd.freq % 1 else self.kiwi_snd.freq //1 - 1
                 else:
-                    self.kiwi_snd.freq = round(self.kiwi_snd.freq - (1.0 if fast_tune else (0.01 if slow_tune else 0.1)), 2)
-                self.kiwi_snd.set_mode_freq_pb()
-                self.update_bar_info()
+                    new_freq = round(self.kiwi_snd.freq - (1.0 if fast_tune else (0.01 if slow_tune else 0.1)), 2)
+                self._on_tune_clicked(new_freq)
 
             elif key == Qt.Key_Right:
                 fast_tune = mods & Qt.ShiftModifier
                 slow_tune = mods & Qt.ControlModifier
+                new_freq = None
                 if self.kiwi_snd.radio_mode != "CW" and self.kiwi_wf.zoom < 10:
                     if fast_tune:
-                        self.kiwi_snd.freq = self.kiwi_snd.freq //1 + 10
+                        new_freq = self.kiwi_snd.freq //1 + 10
                     elif slow_tune:
-                        self.kiwi_snd.freq = self.kiwi_snd.freq + 0.1
+                        new_freq = self.kiwi_snd.freq + 0.1
                     else:
-                        self.kiwi_snd.freq = self.kiwi_snd.freq //1 + 1
+                        new_freq = self.kiwi_snd.freq //1 + 1
                 else:
-                    self.kiwi_snd.freq = self.kiwi_snd.freq + (1.0 if fast_tune else (0.01 if slow_tune else 0.1))
-                self.kiwi_snd.set_mode_freq_pb()
-                self.update_bar_info()
+                    new_freq = self.kiwi_snd.freq + (1.0 if fast_tune else (0.01 if slow_tune else 0.1))
+                self._on_tune_clicked(new_freq)
 
             elif key == Qt.Key_Up:
                 if self.kiwi_wf.zoom < self.kiwi_wf.MAX_ZOOM:
