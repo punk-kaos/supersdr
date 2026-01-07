@@ -227,10 +227,11 @@ class WaterfallWidget(QWidget):
             # Scale and copy old image if it exists
             if not self.waterfall_image.isNull():
                 painter = QPainter(new_image)
-                # Scale old image to fit new dimensions
+                painter.setRenderHint(QPainter.SmoothPixmapTransform)
+                # Scale old image to fit new dimensions using smooth interpolation
                 scaled_old = self.waterfall_image.scaled(new_width, new_height, 
                                                          Qt.IgnoreAspectRatio, 
-                                                         Qt.FastTransformation)
+                                                         Qt.SmoothTransformation)
                 painter.drawImage(0, 0, scaled_old)
                 painter.end()
             
@@ -260,6 +261,7 @@ class WaterfallWidget(QWidget):
         # Shift image down by 1 pixel
         temp_image = QImage(width, height, QImage.Format_RGB32)
         painter = QPainter(temp_image)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
         # Copy old image shifted down by 1 pixel
         painter.drawImage(0, 1, self.waterfall_image, 0, 0, width, height - 1)
         painter.end()
@@ -281,6 +283,8 @@ class WaterfallWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
+        painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.Antialiasing)
         if not self.waterfall_image.isNull():
             painter.drawImage(0, 0, self.waterfall_image)
 
@@ -329,6 +333,41 @@ class TextOverlayWidget(QWidget):
             painter.rotate(rotation)
             painter.drawText(QRect(int(-text_rect.width()/2), int(-text_rect.height()/2), text_rect.width(), text_rect.height()), Qt.AlignCenter, text)
             painter.restore()
+
+def dbm_to_s_unit(dbm):
+    """Convert dBm to standard S-unit notation
+    
+    Standard S-meter scale:
+    - S9 = -73 dBm
+    - Each S-unit = 6 dB increment
+    - S0 to S9 range: -127 to -73 dBm
+    - Above S9: Expressed as "+dB over S9"
+    """
+    if dbm < -127:
+        return "S0"
+    elif dbm < -121:
+        return "S1"
+    elif dbm < -115:
+        return "S2"
+    elif dbm < -109:
+        return "S3"
+    elif dbm < -103:
+        return "S4"
+    elif dbm < -97:
+        return "S5"
+    elif dbm < -91:
+        return "S6"
+    elif dbm < -85:
+        return "S7"
+    elif dbm < -79:
+        return "S8"
+    elif dbm < -73:
+        return "S9"
+    else:
+        db_over_s9 = int(dbm + 73)
+        if db_over_s9 >= 0:
+            return f"S9+{db_over_s9}"
+        return "S9"
 
 class SMeterWidget(QWidget):
     def __init__(self, parent=None):
@@ -405,7 +444,7 @@ class SMeterWidget(QWidget):
             painter.save()
             painter.translate(int(x), int(y))
             painter.rotate(math.degrees(text_angle))
-            painter.drawText(text_list[i], -10, -10)
+            painter.drawText(-10, -10, text_list[i])
             painter.restore()
 
         painter.setPen(QPen(QBLACK, 2))
@@ -416,10 +455,11 @@ class SMeterWidget(QWidget):
                         int(self.s_meter_radius * 2 + self.s_meter_border * 2))
 
         painter.setPen(QPen(QBLUE, 2))
-        painter.drawArc(int(smeter_center_x - self.s_meter_radius - self.s_meter_border),
-                      int(smeter_center_y - self.s_meter_radius - self.s_meter_border),
-                      int(self.s_meter_radius * 2 + self.s_meter_border * 2),
-                      int(math.degrees(-math.pi/2 + angle_offset)), int(math.degrees(math.pi/2 + angle_offset)))
+        arc_rect = QRect(int(smeter_center_x - self.s_meter_radius - self.s_meter_border),
+                         int(smeter_center_y - self.s_meter_radius - self.s_meter_border),
+                         int(self.s_meter_radius * 2 + self.s_meter_border * 2),
+                         int(self.s_meter_radius * 2 + self.s_meter_border * 2))
+        painter.drawArc(arc_rect, int(math.degrees(-math.pi/2 + angle_offset)), int(math.degrees(math.pi/2 + angle_offset)))
 
         painter.setPen(QPen(QRED, 1))
         painter.drawLine(int(smeter_center_x - self.s_meter_radius - self.s_meter_border),
@@ -609,6 +649,42 @@ class TuneOverlayWidget(QWidget):
             self.start_drag_x = -1
             self.update()
 
+class FrequencyLineEdit(QLineEdit):
+    """Custom QLineEdit that passes arrow keys and other navigation keys to parent"""
+    
+    def keyPressEvent(self, event):
+        key = event.key()
+        # Pass through arrow keys, page up/down, space, and shortcut keys to parent
+        passthrough_keys = [
+            Qt.Key_Left, Qt.Key_Right, Qt.Key_Up, Qt.Key_Down,
+            Qt.Key_PageUp, Qt.Key_PageDown, Qt.Key_Space,
+            Qt.Key_Z, Qt.Key_S, Qt.Key_U, Qt.Key_L, Qt.Key_C, Qt.Key_A
+        ]
+        
+        if key in passthrough_keys:
+            # Pass event to parent window
+            event.ignore()
+            return
+        
+        # For Return/Enter, let the normal handler work but then clear focus
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            super().keyPressEvent(event)
+            self.clearFocus()
+            return
+        
+        # For Escape, clear focus without updating
+        if key == Qt.Key_Escape:
+            self.clearFocus()
+            return
+        
+        # Normal processing for typing numbers, etc.
+        super().keyPressEvent(event)
+    
+    def focusOutEvent(self, event):
+        """When focus is lost, restore the current frequency display"""
+        super().focusOutEvent(event)
+        # The parent window's update_bar_info() will refresh the display
+
 
 class ControlDeck(QWidget):
     freq_entered = pyqtSignal(float)
@@ -649,7 +725,7 @@ class ControlDeck(QWidget):
         vfo_layout = QVBoxLayout(self.vfo_frame)
         vfo_layout.setContentsMargins(10, 5, 10, 5)
         
-        self.freq_label = QLineEdit(f"{initial_freq:.3f}")
+        self.freq_label = FrequencyLineEdit(f"{initial_freq:.3f}")
         self.freq_label.setAlignment(Qt.AlignCenter)
         self.freq_label.setStyleSheet("""
             QLineEdit { 
@@ -661,6 +737,7 @@ class ControlDeck(QWidget):
                 font-family: 'Terminus (TTF)'; 
             }
         """)
+        self.freq_label.setFocusPolicy(Qt.ClickFocus)  # Only focus on click, not tab
         self.freq_label.returnPressed.connect(self._on_freq_entered)
 
         self.band_combo = QComboBox()
@@ -1001,9 +1078,13 @@ class SuperSDRMainWindow(QMainWindow):
         # Remove fixed geometry to allow resizing
         # self.tune_overlay_widget.setGeometry(0, 0, DISPLAY_WIDTH, interaction_height)
         self.stacked_layout.addWidget(self.tune_overlay_widget)
-        
+
+        self.s_meter_widget = SMeterWidget(top_interaction_widget)
+        self.s_meter_widget.setVisible(True)
+        self.stacked_layout.addWidget(self.s_meter_widget)
+
         self.tune_overlay_widget.raise_()
-        
+
         main_vbox.addWidget(top_interaction_widget)
 
         self.control_deck = ControlDeck(self, initial_freq=self.current_freq, settings_manager=self.settings_manager)
@@ -1037,7 +1118,6 @@ class SuperSDRMainWindow(QMainWindow):
         self.wf_snd_link_flag = True
         self.cat_snd_link_flag = False
         self.auto_mode = True
-        self.s_meter_show_flag = False
 
         self.delta_low, self.delta_high = 0., 0.
         
@@ -1654,7 +1734,7 @@ class SuperSDRMainWindow(QMainWindow):
 
 
     def update_s_meter_data(self):
-        if not self.kiwi_snd or not self.s_meter_show_flag:
+        if not self.kiwi_snd:
             return
 
         try:
@@ -1677,7 +1757,8 @@ class SuperSDRMainWindow(QMainWindow):
                                                self.kiwi_snd.thresh, self.kiwi_snd.decay)
 
             if hasattr(self, 'control_deck'):
-                 self.control_deck.smeter_label.setText(f"Signal: {int(rssi_smooth_slow)} dBm")
+                 s_unit = dbm_to_s_unit(rssi_smooth_slow)
+                 self.control_deck.smeter_label.setText(f"S-Meter: {s_unit}")
         except Exception as e:
             pass
 
@@ -1875,9 +1956,6 @@ class SuperSDRMainWindow(QMainWindow):
             elif key == Qt.Key_M:
                 if mods & Qt.ShiftModifier:
                     self.show_mem_flag = not self.show_mem_flag
-                else:
-                    self.s_meter_show_flag = not self.s_meter_show_flag
-                    self.s_meter_widget.setVisible(self.s_meter_show_flag)
 
             elif key == Qt.Key_D:
                 self.show_dxcluster_flag = not self.show_dxcluster_flag
