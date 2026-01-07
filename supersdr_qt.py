@@ -2,12 +2,13 @@
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox, QComboBox
-from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QImage, QFontDatabase, QBrush, QFontMetrics
 
 import numpy as np
 import math
 import threading
+from settings_manager import SettingsManager
 from collections import deque
 from typing import Any, Dict
 
@@ -449,7 +450,7 @@ class TuneOverlayWidget(QWidget):
         wf_bins = self.overlay_data.get('wf_bins', 1024)
         
         if bins2pixel_ratio == 0:
-            bins2pixel_ratio = DISPLAY_WIDTH / wf_bins
+            bins2pixel_ratio = self.width() / wf_bins
             
         bins = x_pos / bins2pixel_ratio
         return (span_khz / wf_bins) * bins + start_f_khz
@@ -507,9 +508,10 @@ class TuneOverlayWidget(QWidget):
                     lc_x = lc_bin * bins2pixel_ratio
                     hc_x = hc_bin * bins2pixel_ratio
                     
-                    # Clip to screen boundaries
-                    lc_x = max(0, min(lc_x, DISPLAY_WIDTH))
-                    hc_x = max(0, min(hc_x, DISPLAY_WIDTH))
+                    # Clip to screen boundaries - use widget width to handle resizing
+                    widget_width = self.width()
+                    lc_x = max(0, min(lc_x, widget_width))
+                    hc_x = max(0, min(hc_x, widget_width))
                     
                     # Draw semi-transparent rectangle showing the passband
                     if hc_x > lc_x:  # Only draw if there's visible width
@@ -525,7 +527,8 @@ class TuneOverlayWidget(QWidget):
                         painter.fillRect(int(lc_x), wf_y, int(hc_x - lc_x), wf_height, filter_color)
                 
                 # Draw red RX center line AFTER filter (so it's on top and always visible)
-                if 0 <= rx_x <= DISPLAY_WIDTH:
+                widget_width = self.width()
+                if 0 <= rx_x <= widget_width:
                     # Draw through waterfall
                     painter.setPen(QPen(QRED, 2))
                     painter.drawLine(rx_x, wf_y, rx_x, wf_y + wf_height)
@@ -615,8 +618,9 @@ class ControlDeck(QWidget):
     agc_toggled = pyqtSignal(bool)
     att_toggled = pyqtSignal(bool)
     
-    def __init__(self, parent=None, initial_freq=14200.0):
+    def __init__(self, parent=None, initial_freq=14200.0, settings_manager=None):
         super().__init__(parent)
+        self.settings_manager = settings_manager
         self.setFixedHeight(BOTTOM_DECK_HEIGHT)
         self.setStyleSheet("""
             QWidget { background-color: #1a1a1a; color: #e0e0e0; font-family: 'Terminus (TTF)', monospace; }
@@ -839,12 +843,12 @@ class ControlDeck(QWidget):
         self.cat_sync_kiwi_to_radio_mode_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_mode_cb)
         
-        # Load saved checkbox states from QSettings
-        settings = QSettings("SuperSDR", "Qt")
-        self.cat_sync_radio_to_kiwi_freq_cb.setChecked(settings.value("cat_sync_radio_to_kiwi_freq", False, type=bool))
-        self.cat_sync_kiwi_to_radio_freq_cb.setChecked(settings.value("cat_sync_kiwi_to_radio_freq", False, type=bool))
-        self.cat_sync_radio_to_kiwi_mode_cb.setChecked(settings.value("cat_sync_radio_to_kiwi_mode", False, type=bool))
-        self.cat_sync_kiwi_to_radio_mode_cb.setChecked(settings.value("cat_sync_kiwi_to_radio_mode", False, type=bool))
+        # Load saved checkbox states from settings manager
+        if self.settings_manager:
+            self.cat_sync_radio_to_kiwi_freq_cb.setChecked(self.settings_manager.get_cat_sync_checkbox_state("cat_sync_radio_to_kiwi_freq"))
+            self.cat_sync_kiwi_to_radio_freq_cb.setChecked(self.settings_manager.get_cat_sync_checkbox_state("cat_sync_kiwi_to_radio_freq"))
+            self.cat_sync_radio_to_kiwi_mode_cb.setChecked(self.settings_manager.get_cat_sync_checkbox_state("cat_sync_radio_to_kiwi_mode"))
+            self.cat_sync_kiwi_to_radio_mode_cb.setChecked(self.settings_manager.get_cat_sync_checkbox_state("cat_sync_kiwi_to_radio_mode"))
 
         self.cat_connect_btn = QPushButton("Connect")
         self.cat_connect_btn.setMinimumHeight(35)
@@ -916,6 +920,10 @@ class SuperSDRMainWindow(QMainWindow):
         self.callsign = callsign
         self.rigctld_host = options['rigctld_host']
         self.rigctld_port = options['rigctld_port']
+        
+        # Initialize Settings Manager
+        self.settings_manager = SettingsManager(self)
+
 
         font_db = QFontDatabase()
         current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -998,7 +1006,7 @@ class SuperSDRMainWindow(QMainWindow):
         
         main_vbox.addWidget(top_interaction_widget)
 
-        self.control_deck = ControlDeck(self, initial_freq=self.current_freq)
+        self.control_deck = ControlDeck(self, initial_freq=self.current_freq, settings_manager=self.settings_manager)
         self.cat_status_changed_signal.connect(self.control_deck.update_cat_status_ui)
         main_vbox.addWidget(self.control_deck)
         
@@ -1210,21 +1218,21 @@ class SuperSDRMainWindow(QMainWindow):
         self.control_deck.cat_connect_btn.clicked.connect(self._on_cat_connect_toggle)
         self.tune_overlay_widget.tune_clicked.connect(self._on_tune_clicked)
         self.tune_overlay_widget.wf_dragged.connect(self._on_wf_dragged)
-        
-        # Connect CAT checkbox signals to save their state
-        self.control_deck.cat_sync_radio_to_kiwi_freq_cb.toggled.connect(self._save_cat_checkbox_state)
-        self.control_deck.cat_sync_kiwi_to_radio_freq_cb.toggled.connect(self._save_cat_checkbox_state)
-        self.control_deck.cat_sync_radio_to_kiwi_mode_cb.toggled.connect(self._save_cat_checkbox_state)
-        self.control_deck.cat_sync_kiwi_to_radio_mode_cb.toggled.connect(self._save_cat_checkbox_state)
 
-    def _save_cat_checkbox_state(self):
-        """Save CAT checkbox states to QSettings"""
-        settings = QSettings("SuperSDR", "Qt")
-        settings.setValue("cat_sync_radio_to_kiwi_freq", self.control_deck.cat_sync_radio_to_kiwi_freq_cb.isChecked())
-        settings.setValue("cat_sync_kiwi_to_radio_freq", self.control_deck.cat_sync_kiwi_to_radio_freq_cb.isChecked())
-        settings.setValue("cat_sync_radio_to_kiwi_mode", self.control_deck.cat_sync_radio_to_kiwi_mode_cb.isChecked())
-        settings.setValue("cat_sync_kiwi_to_radio_mode", self.control_deck.cat_sync_kiwi_to_radio_mode_cb.isChecked())
-        settings.sync()  # Ensure immediate write to disk
+        # Connect CAT checkbox signals to the settings manager
+        if self.settings_manager:
+            self.control_deck.cat_sync_radio_to_kiwi_freq_cb.toggled.connect(
+                lambda checked: self.settings_manager.set_cat_sync_checkbox_state("cat_sync_radio_to_kiwi_freq", checked)
+            )
+            self.control_deck.cat_sync_kiwi_to_radio_freq_cb.toggled.connect(
+                lambda checked: self.settings_manager.set_cat_sync_checkbox_state("cat_sync_kiwi_to_radio_freq", checked)
+            )
+            self.control_deck.cat_sync_radio_to_kiwi_mode_cb.toggled.connect(
+                lambda checked: self.settings_manager.set_cat_sync_checkbox_state("cat_sync_radio_to_kiwi_mode", checked)
+            )
+            self.control_deck.cat_sync_kiwi_to_radio_mode_cb.toggled.connect(
+                lambda checked: self.settings_manager.set_cat_sync_checkbox_state("cat_sync_kiwi_to_radio_mode", checked)
+            )
 
     def _set_slider_value(self, slider, value):
         slider.blockSignals(True)
@@ -1492,7 +1500,7 @@ class SuperSDRMainWindow(QMainWindow):
         wf = self.kiwi_wf
         if wf:
             center_freq_bin = wf.WF_BINS / 2
-            bins2pixel_ratio = getattr(wf, 'BINS2PIXEL_RATIO', DISPLAY_WIDTH / wf.WF_BINS)
+            bins2pixel_ratio = getattr(wf, 'BINS2PIXEL_RATIO', self.waterfall_widget.width() / wf.WF_BINS)
             subdiv_list = getattr(wf, 'subdiv_list', [])
             div_list = getattr(wf, 'div_list', [])
             start_f_khz = wf.start_f_khz
@@ -1552,7 +1560,8 @@ class SuperSDRMainWindow(QMainWindow):
                 font_metrics = QFontMetrics(font)
                 text_width = font_metrics.width(str(i))
 
-                if x_pos > text_width / 2 and x_pos < DISPLAY_WIDTH - 10:
+                widget_width = self.waterfall_widget.width()
+                if x_pos > text_width / 2 and x_pos < widget_width - 10:
                     if f_bin - old_fbin <= text_width / 2 + 5:
                         y_offset -= 16
                     else:
@@ -1584,8 +1593,8 @@ class SuperSDRMainWindow(QMainWindow):
                     call = self.dxclust.spot_dict[spot_id][0]
                     font = self.fonts.get("smallfont", QFont("Arial", 10))
                     text_width = QFontMetrics(font).width(call)
-
-                    if 0 < f_bin < DISPLAY_WIDTH:
+                    widget_width = self.waterfall_widget.width()
+                    if 0 < f_bin < widget_width:
                         if f_bin - old_fbin <= text_width / 2 + 5:
                             y_offset += 14
                         else:
@@ -1614,7 +1623,8 @@ class SuperSDRMainWindow(QMainWindow):
                         f_bin = int((float(f_str) - start_f_khz) * bins2pixel_ratio)
                         name = record[3]
                         text_width = QFontMetrics(self.fonts.get("smallfont", QFont("Arial", 10))).width(name)
-                        if 0 < f_bin < DISPLAY_WIDTH:
+                        widget_width = self.waterfall_widget.width()
+                        if 0 < f_bin < widget_width:
                             if f_bin - old_fbin <= text_width / 2 + 5: y_offset += 16
                             else: y_offset = 0
                             old_fbin = f_bin
@@ -1632,7 +1642,8 @@ class SuperSDRMainWindow(QMainWindow):
                     f_bin = int((f_khz - start_f_khz) * bins2pixel_ratio)
                     name = self.beacon_project.beacons_dict[b]
                     text_width = QFontMetrics(self.fonts.get("midfont", QFont("Arial", 12))).width(name)
-                    if 0 < f_bin < DISPLAY_WIDTH:
+                    widget_width = self.waterfall_widget.width()
+                    if 0 < f_bin < widget_width:
                         dynamic_text_elements[f"beacon_{b}"] = {
                             "text": name, "pos": (int(f_bin - text_width / 2), int((self.SPECTRUM_Y + self.TUNEBAR_Y) / 2)),
                             "font_name": "midfont", "color": QGREEN, "bgcolor": QColor(20, 20, 20), "rotation": 0
