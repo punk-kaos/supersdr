@@ -74,11 +74,11 @@ if not freq:
 DISPLAY_WIDTH = 1024
 TOPBAR_HEIGHT = 23
 BOTTOMBAR_HEIGHT = 20
-BOTTOM_DECK_HEIGHT = 160
+BOTTOM_DECK_HEIGHT = 220  # Increased from 160 for better CAT tab visibility
 TUNEBAR_HEIGHT = 23
 _calculated_display_height = DISPLAY_WIDTH // 2 
-WF_HEIGHT = _calculated_display_height * 60 // 100 - BOTTOMBAR_HEIGHT - TUNEBAR_HEIGHT
-SPECTRUM_HEIGHT = _calculated_display_height * 40 // 100 - TOPBAR_HEIGHT
+WF_HEIGHT = _calculated_display_height * 75 // 100 - BOTTOMBAR_HEIGHT - TUNEBAR_HEIGHT  # Increased waterfall
+SPECTRUM_HEIGHT = _calculated_display_height * 15 // 100 - TOPBAR_HEIGHT  # Reduced from 40% to 15%
 DISPLAY_HEIGHT = WF_HEIGHT + SPECTRUM_HEIGHT + TOPBAR_HEIGHT + BOTTOMBAR_HEIGHT + TUNEBAR_HEIGHT + BOTTOM_DECK_HEIGHT
 
 # Define common Qt colors
@@ -116,7 +116,7 @@ def generate_cutesdr_colormap():
 class SpectrumWidget(QWidget):
     def __init__(self, parent=None, colormap=None, spectrum_height=SPECTRUM_HEIGHT, display_width=DISPLAY_WIDTH):
         super().__init__(parent)
-        self.setMinimumHeight(100)  # Allow resizing
+        self.setMinimumHeight(50)  # Reduced from 100 to allow smaller spectrum
         # Remove fixed height to allow resizing
         # self.setMaximumHeight(spectrum_height)
         self.colormap = colormap
@@ -903,7 +903,7 @@ class SuperSDRMainWindow(QMainWindow):
         # Remove fixed height to allow resizing
         # self.spectrum_widget.setFixedHeight(SPECTRUM_HEIGHT)
         self.spectrum_widget.setStyleSheet("background-color: #555;")
-        base_layout.addWidget(self.spectrum_widget, 2)  # stretch = 2 for spectrum
+        base_layout.addWidget(self.spectrum_widget, 1)  # stretch = 1 (reduced for smaller spectrum)
 
         self.tune_bar = QLabel("Tune Bar (Placeholder)")
         self.tune_bar.setFixedHeight(TUNEBAR_HEIGHT)
@@ -915,7 +915,7 @@ class SuperSDRMainWindow(QMainWindow):
         # Remove fixed height to allow resizing
         # self.waterfall_widget.setFixedHeight(WF_HEIGHT)
         self.waterfall_widget.setStyleSheet("background-color: #222;")
-        base_layout.addWidget(self.waterfall_widget, 3)  # stretch = 3 for waterfall
+        base_layout.addWidget(self.waterfall_widget, 5)  # stretch = 5 (increased for larger waterfall)
 
         self.stacked_layout.addWidget(base_layer_widget)
 
