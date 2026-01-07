@@ -2,7 +2,7 @@
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox, QComboBox
-from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QRectF, QDateTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QImage, QFontDatabase, QBrush, QFontMetrics
 
 import numpy as np
@@ -418,6 +418,24 @@ class TuneOverlayWidget(QWidget):
             if rx_freq is not None and start_f_khz is not None and span_khz and wf_bins:
                 rx_bin = (float(rx_freq) - float(start_f_khz)) / (float(span_khz) / float(wf_bins))
                 rx_x = int(rx_bin * bins2pixel_ratio)
+
+                # Draw passband rect in waterfall
+                filter_lc = self.overlay_data.get('filter_lc', 0)
+                filter_hc = self.overlay_data.get('filter_hc', 0)
+                
+                if span_khz > 0:
+                    px_per_hz = (DISPLAY_WIDTH / span_khz) / 1000.0
+                    lc_px = filter_lc * px_per_hz
+                    hc_px = filter_hc * px_per_hz
+                    
+                    x1 = rx_x + lc_px
+                    x2 = rx_x + hc_px
+                    
+                    r_x = min(x1, x2)
+                    r_w = abs(x2 - x1)
+                    
+                    painter.fillRect(QRectF(r_x, float(wf_y), r_w, float(wf_height)), QColor(255, 0, 0, 80))
+
                 if 0 <= rx_x <= DISPLAY_WIDTH:
                     painter.setPen(QPen(QRED, 1))
                     painter.drawLine(rx_x, int(tunebar_y + tunebar_height // 2), rx_x, int(tunebar_y + tunebar_height))
@@ -583,7 +601,7 @@ class ControlDeck(QWidget):
             btn.setCheckable(True)
             if mode == "USB":
                 btn.setChecked(True)
-            if mode in ("NFM", "DIG"):
+            if mode == "DIG":
                 btn.setEnabled(False)
                 btn.setToolTip("Not supported yet")
             mode_layout.addWidget(btn, *pos)
@@ -1075,7 +1093,21 @@ class SuperSDRMainWindow(QMainWindow):
         self.current_mode = mode
         if self.kiwi_snd:
             self.kiwi_snd.radio_mode = mode
-            self._apply_bandwidth(self.control_deck.bw_slider.value())
+            
+            # Set default bandwidths for modes if appropriate
+            if mode == "CW":
+                default_bw = 500
+            elif mode in ["AM", "NFM"]:
+                default_bw = 6000
+            else: # SSB
+                default_bw = 2700
+                
+            self.control_deck.bw_slider.blockSignals(True)
+            self.control_deck.bw_slider.setValue(default_bw)
+            self.control_deck.bw_slider.blockSignals(False)
+            
+            self._apply_bandwidth(default_bw)
+
         if self.kiwi_wf:
             self.kiwi_wf.radio_mode = mode
 
@@ -1084,19 +1116,28 @@ class SuperSDRMainWindow(QMainWindow):
             return
 
         width = max(100, int(width))
-        current_lc = getattr(self.kiwi_snd, "lc", LOW_CUT_SSB)
-        current_hc = getattr(self.kiwi_snd, "hc", HIGH_CUT_SSB)
-        if current_lc <= current_hc:
-            target_lc = current_lc
-            target_hc = target_lc + width
-        else:
-            target_lc = current_lc
-            target_hc = target_lc - width
+        mode = self.kiwi_snd.radio_mode
 
-        self.lc = target_lc
-        self.hc = target_hc
-        self.kiwi_snd.lc = self.lc
-        self.kiwi_snd.hc = self.hc
+        if mode == "USB":
+            self.lc = LOW_CUT_SSB
+            self.hc = self.lc + width
+        elif mode == "LSB":
+            self.hc = -LOW_CUT_SSB
+            self.lc = self.hc - width
+        elif mode == "CW":
+            center = CW_PITCH * 1000
+            self.lc = center - width / 2
+            self.hc = center + width / 2
+        elif mode == "AM" or mode == "NFM":
+            self.lc = -width / 2
+            self.hc = width / 2
+        else:
+            # Fallback for DIG or others
+            self.lc = 0
+            self.hc = width
+
+        self.kiwi_snd.lc = int(self.lc)
+        self.kiwi_snd.hc = int(self.hc)
         self.kiwi_snd.set_mode_freq_pb()
 
     def _on_zoom_changed(self, value):
@@ -1296,6 +1337,13 @@ class SuperSDRMainWindow(QMainWindow):
         rx_freq = self.kiwi_snd.freq if self.kiwi_snd else self.current_freq
         radio_mode = self.kiwi_snd.radio_mode if self.kiwi_snd else self.current_mode
 
+        if self.kiwi_snd:
+            filter_lc = self.kiwi_snd.lc
+            filter_hc = self.kiwi_snd.hc
+        else:
+            filter_lc = self.lc if hasattr(self, 'lc') else LOW_CUT_SSB
+            filter_hc = self.hc if hasattr(self, 'hc') else HIGH_CUT_SSB
+
         tune_overlay_data: dict[str, Any] = {
             'center_freq_bin': center_freq_bin,
             'bins2pixel_ratio': bins2pixel_ratio,
@@ -1314,6 +1362,8 @@ class SuperSDRMainWindow(QMainWindow):
             'wf_bins': wf_bins,
             'rx_freq': rx_freq,
             'radio_mode': radio_mode,
+            'filter_lc': filter_lc,
+            'filter_hc': filter_hc,
             'memory_labels': []
         }
 

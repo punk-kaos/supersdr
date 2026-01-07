@@ -450,7 +450,7 @@ class kiwi_waterfall():
         elif self.radio_mode == "LSB":
             lc_ = -HIGH_CUT_SSB-delta_high_
             hc_ = -LOW_CUT_SSB-delta_low_
-        elif self.radio_mode == "AM":
+        elif self.radio_mode == "AM" or self.radio_mode == "NFM":
             lc_ = -HIGHLOW_CUT_AM-delta_low_
             hc_ = HIGHLOW_CUT_AM+delta_high_
         elif self.radio_mode == "CW":
@@ -656,7 +656,10 @@ class kiwi_sound():
             outdata[:] = 0
 
     def set_mode_freq_pb(self):
-        self.stream.send_message("SET mod=%s low_cut=%d high_cut=%d freq=%.3f" % (self.radio_mode.lower(), self.lc, self.hc, self.freq))
+        mode_str = self.radio_mode.lower()
+        if mode_str == "nfm":
+            mode_str = "nbfm"
+        self.stream.send_message("SET mod=%s low_cut=%d high_cut=%d freq=%.3f" % (mode_str, self.lc, self.hc, self.freq))
 
     def set_agc(self, on, hang, thresh, slope, decay, gain):
         self.on, self.hang, self.thresh, self.slope, self.decay, self.gain = on, hang, thresh, slope, decay, gain
