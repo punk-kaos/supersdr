@@ -2,7 +2,7 @@
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox, QComboBox
-from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal, QSettings
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QImage, QFontDatabase, QBrush, QFontMetrics
 
 import numpy as np
@@ -838,6 +838,13 @@ class ControlDeck(QWidget):
         self.cat_sync_kiwi_to_radio_mode_cb.setMinimumHeight(25)
         self.cat_sync_kiwi_to_radio_mode_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_mode_cb)
+        
+        # Load saved checkbox states from QSettings
+        settings = QSettings("SuperSDR", "Qt")
+        self.cat_sync_radio_to_kiwi_freq_cb.setChecked(settings.value("cat_sync_radio_to_kiwi_freq", False, type=bool))
+        self.cat_sync_kiwi_to_radio_freq_cb.setChecked(settings.value("cat_sync_kiwi_to_radio_freq", False, type=bool))
+        self.cat_sync_radio_to_kiwi_mode_cb.setChecked(settings.value("cat_sync_radio_to_kiwi_mode", False, type=bool))
+        self.cat_sync_kiwi_to_radio_mode_cb.setChecked(settings.value("cat_sync_kiwi_to_radio_mode", False, type=bool))
 
         self.cat_connect_btn = QPushButton("Connect")
         self.cat_connect_btn.setMinimumHeight(35)
@@ -1203,6 +1210,21 @@ class SuperSDRMainWindow(QMainWindow):
         self.control_deck.cat_connect_btn.clicked.connect(self._on_cat_connect_toggle)
         self.tune_overlay_widget.tune_clicked.connect(self._on_tune_clicked)
         self.tune_overlay_widget.wf_dragged.connect(self._on_wf_dragged)
+        
+        # Connect CAT checkbox signals to save their state
+        self.control_deck.cat_sync_radio_to_kiwi_freq_cb.toggled.connect(self._save_cat_checkbox_state)
+        self.control_deck.cat_sync_kiwi_to_radio_freq_cb.toggled.connect(self._save_cat_checkbox_state)
+        self.control_deck.cat_sync_radio_to_kiwi_mode_cb.toggled.connect(self._save_cat_checkbox_state)
+        self.control_deck.cat_sync_kiwi_to_radio_mode_cb.toggled.connect(self._save_cat_checkbox_state)
+
+    def _save_cat_checkbox_state(self):
+        """Save CAT checkbox states to QSettings"""
+        settings = QSettings("SuperSDR", "Qt")
+        settings.setValue("cat_sync_radio_to_kiwi_freq", self.control_deck.cat_sync_radio_to_kiwi_freq_cb.isChecked())
+        settings.setValue("cat_sync_kiwi_to_radio_freq", self.control_deck.cat_sync_kiwi_to_radio_freq_cb.isChecked())
+        settings.setValue("cat_sync_radio_to_kiwi_mode", self.control_deck.cat_sync_radio_to_kiwi_mode_cb.isChecked())
+        settings.setValue("cat_sync_kiwi_to_radio_mode", self.control_deck.cat_sync_kiwi_to_radio_mode_cb.isChecked())
+        settings.sync()  # Ensure immediate write to disk
 
     def _set_slider_value(self, slider, value):
         slider.blockSignals(True)
