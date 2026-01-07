@@ -1888,6 +1888,18 @@ class SuperSDRMainWindow(QMainWindow):
             elif key == Qt.Key_S:
                 self.cat_snd_link_flag = not self.cat_snd_link_flag
 
+        # Frequency control with arrow keys
+        elif key == Qt.Key_Up:
+            fast_tune = mods & Qt.ShiftModifier
+            slow_tune = mods & Qt.ControlModifier
+            freq = round(self.current_freq + (1.0 if fast_tune else (0.01 if slow_tune else 0.1)), 2)
+            self._on_tune_clicked(freq)
+        elif key == Qt.Key_Down:
+            fast_tune = mods & Qt.ShiftModifier
+            slow_tune = mods & Qt.ControlModifier
+            freq = round(self.current_freq - (1.0 if fast_tune else (0.01 if slow_tune else 0.1)), 2)
+            self._on_tune_clicked(freq)
+        
         self.update_bar_info()
         super().keyPressEvent(event)
 

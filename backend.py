@@ -16,6 +16,7 @@ TENMHZ = 10000
 HELP_MESSAGE_LIST = ["SuperSDR %s HELP" % VERSION,
         "",
         "- LEFT/RIGHT: move KIWI RX freq +/- 1kHz (+SHIFT: x10)",
+        "- UP/DOWN: tune main frequency (+SHIFT: 1 kHz, +CTRL: 10 Hz)",
         "- PAGE UP/DOWN: move WF freq +/- SPAN/4",
         "- UP/DOWN: zoom in/out by a factor 2X",
         "- U/L/C/A: switch to USB, LSB, CW, AM",
