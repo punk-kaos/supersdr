@@ -8,7 +8,7 @@ from kiwi import wsclient
 import mod_pywebsocket.common
 from mod_pywebsocket.stream import Stream
 from mod_pywebsocket.stream import StreamOptions
-from mod_pywebsocket._stream_base import ConnectionTerminatedException
+from mod_pywebsocket._stream_base import ConnectionTerminatedException, BadOperationException
 
 VERSION = "v3.14"
 
@@ -369,11 +369,19 @@ class kiwi_waterfall():
         return (1./bins_per_khz_) * (bins_)
 
     def receive_spectrum(self):
-        msg = self.wf_stream.receive_message()
-        if msg and bytearray2str(msg[0:3]) == "W/F":
-            msg = msg[16:]
-            self.spectrum = np.ndarray(len(msg), dtype='B', buffer=msg).astype(np.float32)
-            self.keepalive()
+        try:
+            msg = self.wf_stream.receive_message()
+            if msg and bytearray2str(msg[0:3]) == "W/F":
+                msg = msg[16:]
+                self.spectrum = np.ndarray(len(msg), dtype='B', buffer=msg).astype(np.float32)
+                self.keepalive()
+        except BadOperationException as e:
+            # Handle connection closing gracefully
+            print(f"KiwiSDR waterfall connection closed: {e}")
+            self.terminate = True
+        except Exception as e:
+            print(f"Error receiving spectrum: {e}")
+            self.terminate = True
 
     def spectrum_db2col(self):
         wf = self.spectrum
@@ -509,6 +517,7 @@ class kiwi_sound():
         self.status = None
 
         self.run_index = 0
+        self.keepalive_count = 0  # Counter for keepalive messages
         self.delta_t = 0.0
         self.rssi = -127
         self.freq = freq_
@@ -596,7 +605,11 @@ class kiwi_sound():
         while not self.terminate:
             try:
                 msg = self.stream.receive_message()
-            except:
+            except BadOperationException as e:
+                print(f"KiwiSDR audio connection closed: {e}")
+                break
+            except Exception as e:
+                print(f"Error receiving audio: {e}")
                 break
             
             if msg and bytearray2str(msg[0:3]) == "SND":
@@ -604,6 +617,15 @@ class kiwi_sound():
                 smeter,    = struct.unpack('>H',  buffer(msg[8:10]))
                 data       = msg[10:]
                 self.rssi = 0.1*smeter - 127
+                
+                # Send keepalive every 100 messages (roughly every 2-3 seconds)
+                self.keepalive_count += 1
+                if self.keepalive_count >= 100:
+                    try:
+                        self.stream.send_message("SET keepalive")
+                        self.keepalive_count = 0
+                    except Exception as e:
+                        print(f"Failed to send keepalive: {e}")
                 
                 count = len(data) // 2
                 samples = np.ndarray(count, dtype='>h', buffer=data).astype(np.float32)
@@ -739,28 +761,42 @@ class cat:
         self.KNOWN_MODES = {"USB", "LSB", "CW", "AM"}
         self.radiohost, self.radioport = radiohost_, radioport_
         print ("RTX rigctld server: %s:%d" % (self.radiohost, self.radioport))
+        
+        # Initialize all attributes first
+        self.freq = None
+        self.radio_mode = "USB"
+        self.vfo = "A"
+        self.reply = None
+        self.cat_tx = False
+        self.cat_ok = False
+        
+        # Try to connect
         self.socket = socket.socket()
         self.socket.settimeout(3.0)
-        self.cat_ok = False
         try:
             self.socket.connect((self.radiohost, self.radioport))
-            self.cat_ok = True
-        except:
-            self.cat_ok = False
+        except Exception as e:
+            print(f"Failed to connect to rigctld: {e}")
             return
         
-        if self.cat_ok:
+        # Connection successful, now try to get initial state
+        try:
             self.freq = self.get_freq()
-            if not self.freq:
-                self.cat_ok = False
+            if not self.freq or self.freq == 0:
+                print("Failed to get frequency from rigctld")
                 return
+            
             self.radio_mode = self.get_mode()
-            self.vfo = "A"
-            self.reply = None
-            self.cat_tx = False
-        else:
-            self.freq = None
-            self.radio_mode = "USB"
+            if not self.radio_mode:
+                print("Failed to get mode from rigctld")
+                self.radio_mode = "USB"  # Fallback
+            
+            # If we got here, everything is OK
+            self.cat_ok = True
+            
+        except Exception as e:
+            print(f"Error getting initial CAT state: {e}")
+            self.cat_ok = False
 
     def send_msg(self, msg):
         self.socket.send((msg+"\n").encode())
@@ -805,18 +841,29 @@ class cat:
         self.send_msg("\\get_freq")
         if self.reply:
             try:
-                self.freq = int(self.reply)/1000.
-            except:
+                # Parse as float first (rigctld can return floats like "14078000.000000")
+                # then convert to kHz
+                freq_hz = float(self.reply.strip())
+                self.freq = freq_hz / 1000.0
+                return self.freq
+            except Exception as e:
+                print(f"Error parsing frequency from '{self.reply.strip()}': {e}")
                 self.cat_ok = False
-        return self.freq
+                return None
+        return None
 
     def get_mode(self):
         self.send_msg("\\get_mode")
         if self.reply:
-            self.radio_mode = self.reply.split("\n")[0]
-            if self.radio_mode not in self.KNOWN_MODES:
-                self.radio_mode = "USB"
-            return self.radio_mode
+            try:
+                self.radio_mode = self.reply.split("\n")[0]
+                if self.radio_mode not in self.KNOWN_MODES:
+                    self.radio_mode = "USB"
+                return self.radio_mode
+            except Exception as e:
+                print(f"Error parsing mode: {e}")
+                return "USB"
+        return "USB"
         return "USB"
 
     def disconnect(self):

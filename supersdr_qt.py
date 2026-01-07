@@ -649,7 +649,7 @@ class ControlDeck(QWidget):
             btn.setCheckable(True)
             if mode == "USB":
                 btn.setChecked(True)
-            if mode in ("NFM", "DIG"):
+            if mode == "DIG":  # Only DIG is not supported, NFM is now supported
                 btn.setEnabled(False)
                 btn.setToolTip("Not supported yet")
             mode_layout.addWidget(btn, *pos)
@@ -776,6 +776,9 @@ class ControlDeck(QWidget):
 
         self.cat_sync_kiwi_to_radio_freq_cb = QCheckBox("Sync Freq (Kiwi to Radio)")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_freq_cb)
+        
+        self.cat_sync_radio_to_kiwi_mode_cb = QCheckBox("Sync Mode (Radio to Kiwi)")
+        cat_layout.addWidget(self.cat_sync_radio_to_kiwi_mode_cb)
 
         self.cat_sync_kiwi_to_radio_mode_cb = QCheckBox("Sync Mode (Kiwi to Radio)")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_mode_cb)
@@ -803,6 +806,7 @@ class ControlDeck(QWidget):
             self.cat_port_input.setEnabled(False)
             self.cat_sync_radio_to_kiwi_freq_cb.setEnabled(True)
             self.cat_sync_kiwi_to_radio_freq_cb.setEnabled(True)
+            self.cat_sync_radio_to_kiwi_mode_cb.setEnabled(True)
             self.cat_sync_kiwi_to_radio_mode_cb.setEnabled(True)
         else:
             self.cat_status_label.setText("Status: Disconnected")
@@ -812,6 +816,7 @@ class ControlDeck(QWidget):
             self.cat_port_input.setEnabled(True)
             self.cat_sync_radio_to_kiwi_freq_cb.setEnabled(False)
             self.cat_sync_kiwi_to_radio_freq_cb.setEnabled(False)
+            self.cat_sync_radio_to_kiwi_mode_cb.setEnabled(False)
             self.cat_sync_kiwi_to_radio_mode_cb.setEnabled(False)
 
     def _on_freq_entered(self):
@@ -998,6 +1003,11 @@ class SuperSDRMainWindow(QMainWindow):
         self.s_meter_timer = QTimer(self)
         self.s_meter_timer.timeout.connect(self.update_s_meter_data)
         self.s_meter_timer.start(50)
+        
+        # CAT polling timer for radio-to-kiwi sync
+        self.cat_poll_timer = QTimer(self)
+        self.cat_poll_timer.timeout.connect(self.poll_cat_radio)
+        self.cat_poll_timer.start(500)  # Poll every 500ms
 
         # Only initialize if backend connection succeeded
         kiwi_wf = self.kiwi_wf
@@ -1145,28 +1155,59 @@ class SuperSDRMainWindow(QMainWindow):
         self.current_mode = mode
         if self.kiwi_snd:
             self.kiwi_snd.radio_mode = mode
-            self._apply_bandwidth(self.control_deck.bw_slider.value())
+            
+            # Set default bandwidths for modes
+            if mode == "CW":
+                default_bw = 500
+            elif mode in ["AM", "NFM"]:
+                default_bw = 6000
+            else:  # SSB
+                default_bw = 2700
+                
+            self.control_deck.bw_slider.blockSignals(True)
+            self.control_deck.bw_slider.setValue(default_bw)
+            self.control_deck.bw_slider.blockSignals(False)
+            
+            self._apply_bandwidth(default_bw)
+
         if self.kiwi_wf:
             self.kiwi_wf.radio_mode = mode
+        
+        # Sync mode to CAT radio if enabled
+        if self.cat_active and self.cat_radio and self.control_deck.cat_sync_kiwi_to_radio_mode_cb.isChecked():
+            try:
+                self.cat_radio.set_mode(mode)
+                print(f"Synced mode to CAT radio: {mode}")
+            except Exception as e:
+                print(f"Error syncing mode to CAT radio: {e}")
 
     def _apply_bandwidth(self, width):
         if not self.kiwi_snd:
             return
 
         width = max(100, int(width))
-        current_lc = getattr(self.kiwi_snd, "lc", LOW_CUT_SSB)
-        current_hc = getattr(self.kiwi_snd, "hc", HIGH_CUT_SSB)
-        if current_lc <= current_hc:
-            target_lc = current_lc
-            target_hc = target_lc + width
-        else:
-            target_lc = current_lc
-            target_hc = target_lc - width
+        mode = self.kiwi_snd.radio_mode
 
-        self.lc = target_lc
-        self.hc = target_hc
-        self.kiwi_snd.lc = self.lc
-        self.kiwi_snd.hc = self.hc
+        if mode == "USB":
+            self.lc = LOW_CUT_SSB
+            self.hc = self.lc + width
+        elif mode == "LSB":
+            self.hc = -LOW_CUT_SSB
+            self.lc = self.hc - width
+        elif mode == "CW":
+            center = CW_PITCH * 1000
+            self.lc = int(center - width / 2)
+            self.hc = int(center + width / 2)
+        elif mode == "AM" or mode == "NFM":
+            self.lc = int(-width / 2)
+            self.hc = int(width / 2)
+        else:
+            # Fallback for DIG or others
+            self.lc = 0
+            self.hc = width
+
+        self.kiwi_snd.lc = int(self.lc)
+        self.kiwi_snd.hc = int(self.hc)
         self.kiwi_snd.set_mode_freq_pb()
 
     def _on_zoom_changed(self, value):
@@ -1209,6 +1250,13 @@ class SuperSDRMainWindow(QMainWindow):
             self.kiwi_snd.freq = tuned_freq
             self.kiwi_snd.set_mode_freq_pb()
         
+        # Sync to CAT radio if enabled
+        if self.cat_active and self.cat_radio and self.control_deck.cat_sync_kiwi_to_radio_freq_cb.isChecked():
+            try:
+                self.cat_radio.set_freq(freq)
+            except Exception as e:
+                print(f"Error syncing frequency to CAT radio: {e}")
+        
         if self.wf_snd_link_flag:
             if self.kiwi_wf:
                 self.kiwi_wf.set_freq_zoom(freq, self.kiwi_wf.zoom)
@@ -1229,6 +1277,14 @@ class SuperSDRMainWindow(QMainWindow):
             self.kiwi_snd.freq = float(freq)
             self.kiwi_snd.radio_mode = get_auto_mode(self.kiwi_snd.freq) if get_auto_mode else "USB"
             self.kiwi_snd.set_mode_freq_pb()
+        
+        # Sync to CAT radio if enabled
+        if self.cat_active and self.cat_radio and self.control_deck.cat_sync_kiwi_to_radio_freq_cb.isChecked():
+            try:
+                self.cat_radio.set_freq(float(freq))
+            except Exception as e:
+                print(f"Error syncing frequency to CAT radio: {e}")
+        
         if self.kiwi_wf:
             self.kiwi_wf.set_freq_zoom(float(freq), self.kiwi_wf.zoom)
         self.current_freq = float(freq)
@@ -1289,6 +1345,13 @@ class SuperSDRMainWindow(QMainWindow):
         self.cat_status_changed_signal.emit(self.cat_active)
 
     def update_bar_info(self):
+        # Check if connections are still alive
+        connection_status = "Connected"
+        if self.kiwi_wf and hasattr(self.kiwi_wf, 'terminate') and self.kiwi_wf.terminate:
+            connection_status = "⚠ Waterfall Disconnected"
+        if self.kiwi_snd and hasattr(self.kiwi_snd, 'terminate') and self.kiwi_snd.terminate:
+            connection_status = "⚠ Audio Disconnected"
+        
         if self.kiwi_snd:
             current_freq = self.kiwi_snd.freq
             current_mode = self.kiwi_snd.radio_mode
@@ -1303,7 +1366,8 @@ class SuperSDRMainWindow(QMainWindow):
         top_bar_text = f"UTC: {QDateTime.currentDateTimeUtc().toString('hh:mm:ss')} " \
                        f"RX: {current_freq:.3f}kHz {current_mode} " \
                        f"FILT: {filter_hc - filter_lc}Hz " \
-                       f"AUTO: {'ON' if self.auto_mode else 'OFF'} "
+                       f"AUTO: {'ON' if self.auto_mode else 'OFF'} " \
+                       f"[{connection_status}]"
         self.top_bar.setText(top_bar_text)
 
         tune_bar_text = f"WF: {current_freq:.1f}kHz"
@@ -1518,6 +1582,72 @@ class SuperSDRMainWindow(QMainWindow):
             if hasattr(self, 'control_deck'):
                  self.control_deck.smeter_label.setText(f"Signal: {int(rssi_smooth_slow)} dBm")
         except Exception as e:
+            pass
+
+    def poll_cat_radio(self):
+        """Poll CAT radio for frequency/mode changes and sync to Kiwi if enabled"""
+        if not self.cat_active or not self.cat_radio:
+            return
+        
+        # Check if any sync is enabled
+        freq_sync_enabled = self.control_deck.cat_sync_radio_to_kiwi_freq_cb.isChecked()
+        mode_sync_enabled = self.control_deck.cat_sync_radio_to_kiwi_mode_cb.isChecked()
+        
+        if not freq_sync_enabled and not mode_sync_enabled:
+            return
+        
+        try:
+            # Get current frequency from radio if sync enabled
+            if freq_sync_enabled:
+                radio_freq = self.cat_radio.get_freq()
+                
+                if radio_freq and radio_freq != self.current_freq:
+                    # Frequency changed on radio, update Kiwi
+                    self.current_freq = radio_freq
+                    
+                    if self.kiwi_snd:
+                        tuned_freq = radio_freq
+                        if self.kiwi_snd.radio_mode == "CW":
+                            tuned_freq -= CW_PITCH
+                        self.kiwi_snd.freq = tuned_freq
+                        self.kiwi_snd.set_mode_freq_pb()
+                    
+                    if self.wf_snd_link_flag and self.kiwi_wf:
+                        self.kiwi_wf.set_freq_zoom(radio_freq, self.kiwi_wf.zoom)
+                    
+                    print(f"Synced frequency from radio: {radio_freq} kHz")
+            
+            # Sync mode from radio to Kiwi if enabled
+            if mode_sync_enabled:
+                radio_mode = self.cat_radio.get_mode()
+                if radio_mode and radio_mode != self.current_mode:
+                    # Update mode without triggering sync back to radio
+                    self.current_mode = radio_mode
+                    
+                    if self.kiwi_snd:
+                        self.kiwi_snd.radio_mode = radio_mode
+                        
+                        # Set default bandwidths for modes
+                        if radio_mode == "CW":
+                            default_bw = 500
+                        elif radio_mode in ["AM", "NFM"]:
+                            default_bw = 6000
+                        else:  # SSB
+                            default_bw = 2700
+                            
+                        self.control_deck.bw_slider.blockSignals(True)
+                        self.control_deck.bw_slider.setValue(default_bw)
+                        self.control_deck.bw_slider.blockSignals(False)
+                        
+                        self._apply_bandwidth(default_bw)
+                    
+                    if self.kiwi_wf:
+                        self.kiwi_wf.radio_mode = radio_mode
+                    
+                    print(f"Synced mode from radio: {radio_mode}")
+                    
+        except Exception as e:
+            # Don't spam errors, just fail silently
             pass
 
     def wheelEvent(self, event):
