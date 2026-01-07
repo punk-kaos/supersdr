@@ -1,7 +1,7 @@
 # supersdr_qt.py - Qt version of SuperSDR with pure backend (NO pygame)
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QGridLayout, QWidget, QLabel, QStackedLayout, QFrame, QPushButton, QGroupBox, QSlider, QTabWidget, QButtonGroup, QLineEdit, QCheckBox, QComboBox
 from PyQt5.QtCore import Qt, QSize, QTimer, QRect, QDateTime, QPoint, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QPainter, QPen, QPainterPath, QImage, QFontDatabase, QBrush, QFontMetrics
 
@@ -520,6 +520,9 @@ class ControlDeck(QWidget):
             QTabWidget::pane { border: 1px solid #444; background: #222; }
             QTabBar::tab { background: #2a2a2a; color: #888; border: 1px solid #444; padding: 4px 12px; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: #333; color: #fff; border-bottom: 1px solid #333; }
+            QComboBox { background-color: #333; color: #ccc; border: 1px solid #555; border-radius: 2px; padding: 2px; min-height: 20px; }
+            QComboBox::drop-down { border: 0px; }
+            QComboBox QAbstractItemView { background-color: #333; color: #ccc; selection-background-color: #555; }
         """)
         
         main_layout = QHBoxLayout(self)
@@ -544,12 +547,24 @@ class ControlDeck(QWidget):
             }
         """)
         self.freq_label.returnPressed.connect(self._on_freq_entered)
+
+        self.band_combo = QComboBox()
+        self.bands_list = [
+            ("Band Select", None),
+            ("160m", 1800), ("80m", 3500), ("60m", 5330), ("40m", 7000),
+            ("30m", 10100), ("20m", 14000), ("17m", 18068), ("15m", 21000),
+            ("12m", 24890), ("10m", 28000)
+        ]
+        for name, freq in self.bands_list:
+            self.band_combo.addItem(name, freq)
+        self.band_combo.currentIndexChanged.connect(self._on_band_combo_changed)
         
         self.smeter_label = QLabel("S-Meter: S9+10dB")
         self.smeter_label.setAlignment(Qt.AlignCenter)
         self.smeter_label.setStyleSheet("font-size: 14px; color: #ffaa00; border: none;")
         
         vfo_layout.addWidget(self.freq_label)
+        vfo_layout.addWidget(self.band_combo)
         vfo_layout.addWidget(self.smeter_label)
         main_layout.addWidget(self.vfo_frame, 2)
 
@@ -741,6 +756,11 @@ class ControlDeck(QWidget):
             self.freq_label.clearFocus()
         except ValueError:
             pass
+
+    def _on_band_combo_changed(self, index):
+        data = self.band_combo.itemData(index)
+        if data is not None:
+            self.band_clicked.emit(float(data))
 
 
 
