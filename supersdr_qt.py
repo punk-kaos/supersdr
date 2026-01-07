@@ -484,7 +484,52 @@ class TuneOverlayWidget(QWidget):
             if rx_freq is not None and start_f_khz is not None and span_khz and wf_bins:
                 rx_bin = (float(rx_freq) - float(start_f_khz)) / (float(span_khz) / float(wf_bins))
                 rx_x = int(rx_bin * bins2pixel_ratio)
+                
+                # Draw filter passband rectangle over waterfall FIRST (so red line is on top)
+                filter_lc = self.overlay_data.get('filter_lc')
+                filter_hc = self.overlay_data.get('filter_hc')
+                
+                if filter_lc is not None and filter_hc is not None and span_khz > 0:
+                    # Convert filter cutoff frequencies (Hz) to screen coordinates
+                    # filter_lc and filter_hc are offsets in Hz from rx_freq
+                    # Convert to kHz offset
+                    lc_offset_khz = filter_lc / 1000.0
+                    hc_offset_khz = filter_hc / 1000.0
+                    
+                    # Calculate absolute frequencies
+                    lc_freq = rx_freq + lc_offset_khz
+                    hc_freq = rx_freq + hc_offset_khz
+                    
+                    # Convert to screen x coordinates
+                    lc_bin = (lc_freq - start_f_khz) / (span_khz / wf_bins)
+                    hc_bin = (hc_freq - start_f_khz) / (span_khz / wf_bins)
+                    
+                    lc_x = lc_bin * bins2pixel_ratio
+                    hc_x = hc_bin * bins2pixel_ratio
+                    
+                    # Clip to screen boundaries
+                    lc_x = max(0, min(lc_x, DISPLAY_WIDTH))
+                    hc_x = max(0, min(hc_x, DISPLAY_WIDTH))
+                    
+                    # Draw semi-transparent rectangle showing the passband
+                    if hc_x > lc_x:  # Only draw if there's visible width
+                        # Choose color based on mode
+                        radio_mode = self.overlay_data.get('radio_mode', 'USB')
+                        if radio_mode in ['AM', 'NFM']:
+                            filter_color = QColor(0, 150, 255, 60)  # Blue, 60/255 opacity (~23%)
+                        elif radio_mode == 'CW':
+                            filter_color = QColor(255, 200, 0, 60)  # Yellow, 60/255 opacity
+                        else:  # USB, LSB
+                            filter_color = QColor(0, 255, 0, 60)    # Green, 60/255 opacity
+                        
+                        painter.fillRect(int(lc_x), wf_y, int(hc_x - lc_x), wf_height, filter_color)
+                
+                # Draw red RX center line AFTER filter (so it's on top and always visible)
                 if 0 <= rx_x <= DISPLAY_WIDTH:
+                    # Draw through waterfall
+                    painter.setPen(QPen(QRED, 2))
+                    painter.drawLine(rx_x, wf_y, rx_x, wf_y + wf_height)
+                    # Draw on tune bar
                     painter.setPen(QPen(QRED, 1))
                     painter.drawLine(rx_x, int(tunebar_y + tunebar_height // 2), rx_x, int(tunebar_y + tunebar_height))
 
@@ -751,39 +796,52 @@ class ControlDeck(QWidget):
 
         host_layout = QHBoxLayout()
         host_label = QLabel("Host:")
-        host_label.setFixedWidth(40)
+        host_label.setFixedWidth(50)
         host_layout.addWidget(host_label)
         self.cat_host_input = QLineEdit("localhost")
-        self.cat_host_input.setStyleSheet("background-color: #333; color: #fff; padding: 2px; border: 1px solid #555;")
+        self.cat_host_input.setMinimumHeight(30)
+        self.cat_host_input.setStyleSheet("background-color: #333; color: #fff; padding: 5px; border: 1px solid #555; font-size: 12px;")
         host_layout.addWidget(self.cat_host_input)
         cat_layout.addLayout(host_layout)
 
         port_layout = QHBoxLayout()
         port_label = QLabel("Port:")
-        port_label.setFixedWidth(40)
+        port_label.setFixedWidth(50)
         port_layout.addWidget(port_label)
         self.cat_port_input = QLineEdit("4532")
-        self.cat_port_input.setStyleSheet("background-color: #333; color: #fff; padding: 2px; border: 1px solid #555;")
+        self.cat_port_input.setMinimumHeight(30)
+        self.cat_port_input.setStyleSheet("background-color: #333; color: #fff; padding: 5px; border: 1px solid #555; font-size: 12px;")
         port_layout.addWidget(self.cat_port_input)
         cat_layout.addLayout(port_layout)
 
         self.cat_status_label = QLabel("Status: Disconnected")
-        self.cat_status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
+        self.cat_status_label.setMinimumHeight(25)
+        self.cat_status_label.setStyleSheet("color: #ff5252; font-weight: bold; font-size: 12px;")
         cat_layout.addWidget(self.cat_status_label)
 
         self.cat_sync_radio_to_kiwi_freq_cb = QCheckBox("Sync Freq (Radio to Kiwi)")
+        self.cat_sync_radio_to_kiwi_freq_cb.setMinimumHeight(25)
+        self.cat_sync_radio_to_kiwi_freq_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_radio_to_kiwi_freq_cb)
 
         self.cat_sync_kiwi_to_radio_freq_cb = QCheckBox("Sync Freq (Kiwi to Radio)")
+        self.cat_sync_kiwi_to_radio_freq_cb.setMinimumHeight(25)
+        self.cat_sync_kiwi_to_radio_freq_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_freq_cb)
         
         self.cat_sync_radio_to_kiwi_mode_cb = QCheckBox("Sync Mode (Radio to Kiwi)")
+        self.cat_sync_radio_to_kiwi_mode_cb.setMinimumHeight(25)
+        self.cat_sync_radio_to_kiwi_mode_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_radio_to_kiwi_mode_cb)
 
         self.cat_sync_kiwi_to_radio_mode_cb = QCheckBox("Sync Mode (Kiwi to Radio)")
+        self.cat_sync_kiwi_to_radio_mode_cb.setMinimumHeight(25)
+        self.cat_sync_kiwi_to_radio_mode_cb.setStyleSheet("font-size: 11px;")
         cat_layout.addWidget(self.cat_sync_kiwi_to_radio_mode_cb)
 
         self.cat_connect_btn = QPushButton("Connect")
+        self.cat_connect_btn.setMinimumHeight(35)
+        self.cat_connect_btn.setStyleSheet("font-size: 12px; font-weight: bold; padding: 5px;")
         cat_layout.addWidget(self.cat_connect_btn)
         
         cat_layout.addStretch()
@@ -1429,6 +1487,10 @@ class SuperSDRMainWindow(QMainWindow):
 
         rx_freq = self.kiwi_snd.freq if self.kiwi_snd else self.current_freq
         radio_mode = self.kiwi_snd.radio_mode if self.kiwi_snd else self.current_mode
+        
+        # Get filter cutoff frequencies for passband visualization
+        filter_lc = self.lc if hasattr(self, 'lc') else LOW_CUT_SSB
+        filter_hc = self.hc if hasattr(self, 'hc') else HIGH_CUT_SSB
 
         tune_overlay_data: dict[str, Any] = {
             'center_freq_bin': center_freq_bin,
@@ -1448,6 +1510,8 @@ class SuperSDRMainWindow(QMainWindow):
             'wf_bins': wf_bins,
             'rx_freq': rx_freq,
             'radio_mode': radio_mode,
+            'filter_lc': filter_lc,
+            'filter_hc': filter_hc,
             'memory_labels': []
         }
 
