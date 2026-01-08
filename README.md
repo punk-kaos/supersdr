@@ -1,5 +1,8 @@
 # SuperSDR
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-ffdd00?style=flat&logo=buy-me-a-coffee&logoColor=black)](https://www.buymeacoffee.com/punk.kaos)
+
+
 ![SuperSDR in action](https://github.com/mcogoni/supersdr/blob/main/SuperSDR_screenshot.png)
 SuperSDR integrates a realtime spectrum waterfall and (dual) audio receive from any KiwiSDR around the world, together with a local (or remote) controlled CAT transceiver.
 
